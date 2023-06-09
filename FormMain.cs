@@ -3,71 +3,67 @@ using System.IO;
 using System.Diagnostics;
 using System.Windows.Forms;
 using System.Runtime.InteropServices;
+using System.Linq;
 
-namespace DragForListary
-{
-    public partial class FormMain : Form
-    {
-        string arg = null;
-        string[] DropFile = null;
-        FileInfo info;
+namespace DragForListary {
+    public partial class FormMain : Form {
+        string targetPath;
+        FileInfo targetInfo;
+        bool targetDir = false;
+        bool targetExec = false;
+
+        string[] dropped = null;
+
         bool Copy = true;
         bool Exec = false;
-        bool ExecAble = false;
 
-        public FormMain(string args)
-        {
+        public FormMain(string args) {
             InitializeComponent();
-            arg = args;
 
-            info = new FileInfo(args);
-            string[] Ext = Environment.GetEnvironmentVariable("PATHEXT").ToUpper().Split(';');
-            if (((System.Collections.IList)Ext).Contains(info.Extension.ToUpper()))
-            {
-                ExecAble = true;
+            ClosePrompt();
+
+            targetPath = args;
+            label1.Text = targetPath;
+
+            targetInfo = new FileInfo(targetPath);
+            targetDir = targetInfo.Attributes.HasFlag(FileAttributes.Directory);
+            if (!targetDir) {
+                var exec = Environment.GetEnvironmentVariable("PATHEXT")
+                    .ToUpper().Split(';').ToList()
+                    .Where(a => !String.IsNullOrEmpty(a))
+                    .ToList();
+                string ext = targetInfo.Extension.ToUpper();
+                targetExec = exec.Contains(ext);
             }
         }
 
-        private void FormMain_DragOver(object sender, DragEventArgs e)
-        {
-            if (ExecAble && e.KeyState == 1)                //LeftButton
-            {
+        private void FormMain_DragOver(object sender, DragEventArgs e) {
+            if (targetExec && e.KeyState == 1) {              // LeftButton
                 e.Effect = DragDropEffects.Link;
                 this.Text = "Exec";
-            }
-            else if (e.KeyState == 5)                       //Shift With LeftButton
-            {
+            } else if (e.KeyState == 5) {                     // LeftButton + Shift
                 e.Effect = DragDropEffects.Move;
                 this.Text = "Move";
-            }
-            else if (e.KeyState == 1 || e.KeyState == 9)    //(None or Ctrl) With LeftButton
-            {
+            } else if (e.KeyState == 1 || e.KeyState == 9) {  // LeftButton + None/Ctrl
                 e.Effect = DragDropEffects.Copy;
                 this.Text = "Copy";
-            }
-            else
-            {
+            } else {
                 e.Effect = DragDropEffects.None;
                 this.Text = "";
             }
         }
 
-        private void FormMain_DragLeave(object sender, EventArgs e)
-        {
+        private void FormMain_DragLeave(object sender, EventArgs e) {
             this.Text = "";
         }
 
-        private void FormMain_DragDrop(object sender, DragEventArgs e)
-        {
-            DropFile = (string[])e.Data.GetData(DataFormats.FileDrop);
-            if (DropFile != null)
-            {
-                if (ExecAble && e.KeyState == 0)
-                {
+        private void FormMain_DragDrop(object sender, DragEventArgs e) {
+            this.Text = "";
+            dropped = (string[])e.Data.GetData(DataFormats.FileDrop);
+            if (dropped != null) {
+                if (targetExec && e.KeyState == 0) {
                     Exec = true;
-                }
-                else if (e.KeyState == 4)       //Shift
-                {
+                } else if (e.KeyState == 4) {     // Shift
                     Exec = false;
                     Copy = false;
                 }
@@ -75,70 +71,66 @@ namespace DragForListary
             }
         }
 
-        private void Timer_Tick(object sender, EventArgs e)
-        {
+        private void Timer_Tick(object sender, EventArgs e) {
             timer.Enabled = false;
-            if (Exec && info.Exists)
-            {
-                ProcessStartInfo ps = new ProcessStartInfo(arg);
+            if (!targetDir && !targetInfo.Exists) return;
+
+            if (Exec) {
+                ProcessStartInfo ps = new ProcessStartInfo(targetPath);
                 ps.UseShellExecute = true;
                 ps.CreateNoWindow = false;
-                ps.Arguments = " \"" + string.Join("\" \"", DropFile) + '"';
+                ps.Arguments = " \"" + string.Join("\" \"", dropped) + "\"";
                 Process.Start(ps);
-            }
-            else
-            {
+            } else {
                 SHFILEOPSTRUCT pm = new SHFILEOPSTRUCT();
                 pm.fFlags = FILEOP_FLAGS.FOF_ALLOWUNDO;
-                pm.pFrom = string.Join(FILE_SPLITER, DropFile);
-                pm.pFrom += (FILE_SPLITER + FILE_SPLITER);
-                if (Copy)
-                {
-                    pm.wFunc = wFunc.FO_COPY;
+                pm.pFrom = string.Join("\0", dropped) + "\0\0";
+                pm.wFunc = Copy ? wFunc.FO_COPY : wFunc.FO_MOVE;
+
+                if (targetDir) {
+                    pm.pTo = targetInfo.FullName;
+                } else {
+                    pm.pTo = targetInfo.DirectoryName;
                 }
-                else
-                {
-                    pm.wFunc = wFunc.FO_MOVE;
-                }
-                if ((info.Attributes & System.IO.FileAttributes.Directory) != 0)
-                {
-                    pm.pTo = info.FullName;
-                }
-                else
-                {
-                    pm.pTo = info.DirectoryName;
-                }
+
                 SHFileOperation(pm);
             }
-            Environment.Exit(0);
         }
 
-        [DllImport("shell32.dll", CharSet = CharSet.Unicode)]private static extern int SHFileOperation(SHFILEOPSTRUCT lpFileOp);
-        private const string FILE_SPLITER = "\0";
-        // Shell文件操作数据类型
+        void ClosePrompt() {
+            var hwnd = FindWindow("Listary_WidgetWin_0", "");
+            if (hwnd != IntPtr.Zero) PostMessage(hwnd, 16, IntPtr.Zero, IntPtr.Zero);
+        }
+
+        [DllImport("user32.dll")]
+        static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
+
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+        static extern int SHFileOperation(SHFILEOPSTRUCT lpFileOp);
+
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-        private class SHFILEOPSTRUCT
-        {
+        private class SHFILEOPSTRUCT {
             public IntPtr hwnd;
-            public wFunc wFunc;                 //操作方式
-            public string pFrom;                //源
-            public string pTo;                  //目标
+            public wFunc wFunc;
+            public string pFrom;
+            public string pTo;
             public FILEOP_FLAGS fFlags;
-            public bool fAnyOperationsAborted;  //中止
+            public bool fAnyOperationsAborted;
             public IntPtr hNameMappings;
-            public string lpszProgressTitle;    //标题
+            public string lpszProgressTitle;
         }
 
-        private enum wFunc
-        {
+        private enum wFunc {
             FO_MOVE = 0x1,
             FO_COPY = 0x2,
             FO_DELETE = 0x3,
             FO_RENAME = 0x4
         }
 
-        private enum FILEOP_FLAGS
-        {
+        private enum FILEOP_FLAGS {
             FOF_MULTIDESTFILES = 0x1,
                 //The pTo member specifies multiple destination files (one for each source file) rather than one directory where all source files are to be deposited.
             FOF_CONFIRMMOUSE = 0x2,
