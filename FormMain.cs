@@ -17,12 +17,12 @@ namespace DragForListary {
         bool Copy = true;
         bool Exec = false;
 
-        public FormMain(string args) {
+        public FormMain(string targetPath) {
             InitializeComponent();
 
             ClosePrompt();
 
-            targetPath = args;
+            this.targetPath = targetPath;
             label1.Text = targetPath;
 
             targetInfo = new FileInfo(targetPath);
